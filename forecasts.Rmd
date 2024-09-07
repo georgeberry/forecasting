@@ -1,0 +1,164 @@
+---
+title: "grimmer et al"
+output: html_document
+date: "2024-09-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(123)
+library(pheatmap)
+```
+
+
+
+```{r}
+N_elections = c(3, 5, 7, 10, 20, 30, 40, 50, 100, 1000)
+correct_probs = c(0.51, 0.53, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9)
+
+df_res_5 = data.frame(matrix(ncol=length(N_elections), nrow=length(correct_probs)))
+colnames(df_res_5) = N_elections
+rownames(df_res_5) = correct_probs
+
+df_res_07 = data.frame(matrix(ncol=length(N_elections), nrow=length(correct_probs)))
+colnames(df_res_07) = N_elections
+rownames(df_res_07) = correct_probs
+```
+
+
+```{r}
+sim = function(n_elecs, correct_prob, n_sims=1000, confidence = 5) {
+  res = c()
+  
+  for (i in 1:n_sims) {
+    # Simulate actual election outcomes (1 = Candidate A wins, 0 = Candidate A loses)
+    actual_outcomes <- rbinom(n_elecs, 1, 0.5)  # 50% chance for each candidate
+    
+    # Forecaster 1: Random guesses (uniformly distributed between 0 and 1)
+    forecaster1_prob <- runif(n_elecs)
+    
+    # Forecaster 2: Noisy, but on average correct
+    forecaster2_prob <- ifelse(
+      actual_outcomes == 1,
+      rbeta(n_elecs, correct_prob * confidence, (1 - correct_prob) * confidence),
+      rbeta(n_elecs, (1 - correct_prob) * confidence, correct_prob * confidence)
+    )
+    
+    # Calculate Brier scores for each forecaster
+    brier1 <- (forecaster1_prob - actual_outcomes)^2
+    brier2 <- (forecaster2_prob - actual_outcomes)^2
+    
+    # Paired t-test to test if there is a significant difference between the Brier scores
+    brier_diff <- brier1 - brier2
+    t_test_result <- mean(brier_diff) / (sd(brier_diff) / sqrt(n_elecs))
+    
+    # Output the result of the t-test
+    res = c(res, t_test_result)
+  }
+  return(mean(res))
+}
+```
+
+```{r}
+for (elec_idx in seq_along(N_elections)) {
+  for (prob_idx in seq_along(correct_probs)) {
+    elec = N_elections[elec_idx]
+    prob = correct_probs[prob_idx]
+    tval = sim(elec, prob, confidence=5)
+    df_res_5[elec_idx, prob_idx] = tval
+    tval = sim(elec, prob, confidence=0.7)
+    df_res_07[elec_idx, prob_idx] = tval
+  }
+}
+```
+
+```{r}
+is_significant <- function(t_value, sample_size) {
+  # Calculate degrees of freedom
+  df <- sample_size - 1
+  
+  # Get critical t-values for different significance levels (vectorized)
+  t_0.05 <- qt(0.95, df)   # two-tailed 0.05
+  t_0.01 <- qt(0.99, df)   # two-tailed 0.01
+  t_0.005 <- qt(0.995, df) # two-tailed 0.005
+  t_0.001 <- qt(0.999, df) # two-tailed 0.001
+  
+   significance <- ifelse(t_value > t_0.001, "p < 0.001",
+                         ifelse(t_value > t_0.005, "p < 0.005",
+                                ifelse(t_value > t_0.01, "p < 0.01",
+                                       ifelse(t_value > t_0.05, "p < 0.05",
+                                              "NS"))))
+
+  return(significance)
+}
+
+```
+
+
+```{r}
+long = bind_rows(
+  df_res_5 %>%
+    mutate(
+      Row=rownames(df_res_5)
+    ) %>%
+    pivot_longer(cols=-Row, names_to = "Column", values_to = "Value") %>%
+    mutate(
+      kind='5',
+    ),
+  df_res_07 %>%
+    mutate(
+      Row=rownames(df_res_07)
+    ) %>%
+    pivot_longer(cols=-Row, names_to = "Column", values_to = "Value") %>%
+    mutate(
+      kind='07',
+    )
+)
+
+long <- long %>%
+  mutate(
+    Tval = factor(
+      is_significant(as.numeric(Value), as.numeric(Column)),
+      levels = c('NS', 'p < 0.05', 'p < 0.01', 'p < 0.005', 'p < 0.001')
+    ),
+    Column = factor(long$Column, levels = as.character(unique(long$Column))),
+    Row = factor(long$Row, levels = as.character(unique(long$Row))),
+    facet_label = factor(
+      case_when(
+        kind == '5' ~ 'Opponent guesses randomly; concentration = 5',
+        kind == '07' ~ 'Opponent guesses randomly; concentration = 0.7',
+        TRUE ~ NA_character_
+      ),
+      levels = c(
+        'Opponent guesses randomly; concentration = 5', 
+        'Opponent guesses randomly; concentration = 0.7'
+      )
+    )
+  )
+
+
+```
+
+```{r}
+ggplot(long) +
+  geom_tile(aes(x=Column, y=Row, fill=Tval)) +
+  theme_minimal() +
+  labs(x='Number of elections', y='Probability forecaster is right') + 
+  facet_wrap(~facet_label)
+```
+
+
+```{r}
+corr_mat = read_csv('~/Downloads/state_correlation_matrix.csv')
+```
+
+```{r}
+eigenvalues <- eigen(corr_mat)$values
+
+# Step 2: Calculate the effective number of independent observations
+trace_cov <- sum(eigenvalues)           # Sum of eigenvalues (trace of the covariance matrix)
+sum_of_squares <- sum(eigenvalues^2)    # Sum of squared eigenvalues
+
+N_eff <- (trace_cov^2) / sum_of_squares
+```
+
