@@ -1,5 +1,5 @@
 ---
-title: "grimmer et al"
+title: "forecasting"
 output: html_document
 date: "2024-09-07"
 ---
@@ -7,7 +7,7 @@ date: "2024-09-07"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 set.seed(123)
-library(pheatmap)
+library(tidyverse)
 ```
 
 
@@ -20,9 +20,17 @@ df_res_5 = data.frame(matrix(ncol=length(N_elections), nrow=length(correct_probs
 colnames(df_res_5) = N_elections
 rownames(df_res_5) = correct_probs
 
+df_res_5_p_sig = data.frame(matrix(ncol=length(N_elections), nrow=length(correct_probs)))
+colnames(df_res_5_p_sig) = N_elections
+rownames(df_res_5_p_sig) = correct_probs
+
 df_res_07 = data.frame(matrix(ncol=length(N_elections), nrow=length(correct_probs)))
 colnames(df_res_07) = N_elections
 rownames(df_res_07) = correct_probs
+
+df_res_07_p_sig = data.frame(matrix(ncol=length(N_elections), nrow=length(correct_probs)))
+colnames(df_res_07_p_sig) = N_elections
+rownames(df_res_07_p_sig) = correct_probs
 ```
 
 
@@ -55,7 +63,7 @@ sim = function(n_elecs, correct_prob, n_sims=1000, confidence = 5) {
     # Output the result of the t-test
     res = c(res, t_test_result)
   }
-  return(mean(res))
+  return(res)
 }
 ```
 
@@ -65,9 +73,11 @@ for (elec_idx in seq_along(N_elections)) {
     elec = N_elections[elec_idx]
     prob = correct_probs[prob_idx]
     tval = sim(elec, prob, confidence=5)
-    df_res_5[elec_idx, prob_idx] = tval
+    df_res_5[elec_idx, prob_idx] = mean(tval)
+    df_res_5_p_sig[elec_idx, prob_idx] = mean(tval > qt(0.95, N_elections))
     tval = sim(elec, prob, confidence=0.7)
-    df_res_07[elec_idx, prob_idx] = tval
+    df_res_07[elec_idx, prob_idx] = mean(tval)
+    df_res_07_p_sig[elec_idx, prob_idx] = mean(tval > qt(0.95, N_elections))
   }
 }
 ```
@@ -143,17 +153,179 @@ long <- long %>%
 ggplot(long) +
   geom_tile(aes(x=Column, y=Row, fill=Tval)) +
   theme_minimal() +
-  labs(x='Number of elections', y='Probability forecaster is right') + 
+  labs(x='Number of elections', y='Probability forecaster is right', title='Average signifiance level of a forecaster relative to random guessing') +
   facet_wrap(~facet_label)
 ```
 
+```{r}
+long2 = bind_rows(
+  df_res_5_p_sig %>%
+    mutate(
+      Row=rownames(df_res_5_p_sig)
+    ) %>%
+    pivot_longer(cols=-Row, names_to = "Column", values_to = "Value") %>%
+    mutate(
+      kind='5',
+    ),
+  df_res_07_p_sig %>%
+    mutate(
+      Row=rownames(df_res_07_p_sig)
+    ) %>%
+    pivot_longer(cols=-Row, names_to = "Column", values_to = "Value") %>%
+    mutate(
+      kind='07',
+    )
+)
+
+long2 <- long2 %>%
+  mutate(
+    Column = factor(long$Column, levels = as.character(unique(long$Column))),
+    Row = factor(long$Row, levels = as.character(unique(long$Row))),
+    PercentSignificant=Value,
+    facet_label = factor(
+      case_when(
+        kind == '5' ~ 'Opponent guesses randomly; concentration = 5',
+        kind == '07' ~ 'Opponent guesses randomly; concentration = 0.7',
+        TRUE ~ NA_character_
+      ),
+      levels = c(
+        'Opponent guesses randomly; concentration = 5', 
+        'Opponent guesses randomly; concentration = 0.7'
+      )
+    )
+  )
+```
+
 
 ```{r}
-corr_mat = read_csv('~/Downloads/state_correlation_matrix.csv')
+ggplot(long2) +
+  geom_tile(aes(x=Column, y=Row, fill=PercentSignificant)) +
+  theme_minimal() +
+  labs(x='Number of elections', y='Probability forecaster is right', title='Fraction of simulations where p < 0.05') + 
+  facet_wrap(~facet_label)
 ```
 
 ```{r}
+ggplot(long2) +
+  geom_tile(aes(x=Column, y=Row, fill=PercentSignificant)) +
+  geom_text(aes(x=Column, y=Row, label=round(PercentSignificant, 1))) +
+  theme_minimal() +
+  labs(x='Number of elections', y='Probability forecaster is right', title='Fraction of simulations where p < 0.05') + 
+  facet_wrap(~facet_label)
+```
+
+```{r}
+corr_mat = read_csv('~/Desktop/state_correlation_matrix.csv')
+```
+
+
+```{r}
 eigenvalues <- eigen(corr_mat)$values
+
+# Step 2: Calculate the effective number of independent observations
+trace_cov <- sum(eigenvalues)           # Sum of eigenvalues (trace of the covariance matrix)
+sum_of_squares <- sum(eigenvalues^2)    # Sum of squared eigenvalues
+
+N_eff <- (trace_cov^2) / sum_of_squares
+```
+
+### bayes
+
+```{r}
+p_forecast_given_outcome = function(p_outcome_given_forecast, prior=0.8, base_prob=0.5) {
+  (p_outcome_given_forecast * prior) / (p_outcome_given_forecast * prior + (1 - p_outcome_given_forecast) * base_prob)
+}
+
+p_forecast_given_outcome = function(p_outcome_given_forecast, prior=0.8, base_prob=0.5) {
+  (p_outcome_given_forecast * prior) / (p_outcome_given_forecast * prior + base_prob * (1 - prior))
+}
+```
+
+```{r}
+#p_2008 = p_forecast_given_outcome(
+#  p_outcome_given_forecast=0.29
+#)
+p_2012 = p_forecast_given_outcome(
+  p_outcome_given_forecast=.91, prior=0.5
+)
+p_2016 = p_forecast_given_outcome(
+  p_outcome_given_forecast=.29, prior=p_2012
+)
+p_2020 = p_forecast_given_outcome(
+  p_outcome_given_forecast=.89, prior=p_2016
+)
+print(p_2020)
+```
+
+```{r}
+#p_2008 = p_forecast_given_outcome(
+#  p_outcome_given_forecast=0.29
+#)
+p_2012 = p_forecast_given_outcome(
+  p_outcome_given_forecast=.98, prior=0.5
+)
+p_2016 = p_forecast_given_outcome(
+  p_outcome_given_forecast=.01, prior=p_2012
+)
+p_2020 = p_forecast_given_outcome(
+  p_outcome_given_forecast=.97, prior=p_2016
+)
+print(p_2020)
+```
+
+```{r}
+rnd = c()
+
+for (i in 1:1000) {
+  p_2012 = p_forecast_given_outcome(
+    p_outcome_given_forecast=runif(1), prior=0.5
+  )
+  p_2016 = p_forecast_given_outcome(
+    p_outcome_given_forecast=runif(1), prior=p_2012
+  )
+  p_2020 = p_forecast_given_outcome(
+    p_outcome_given_forecast=runif(1), prior=p_2016
+  )
+  rnd = c(rnd, p_2020)
+}
+
+print(mean(rnd))
+```
+
+
+```{r}
+par(mfrow = c(1, 2))
+hist(rbeta(1000, 0.7 * 5, 0.3 * 5), main='Beta dist; c = 5')
+hist(rbeta(1000, 0.7 * 0.7, 0.3 * 0.7), main='Beta dist; c = 0.7')
+```
+
+
+## House results
+
+
+```{r}
+df = read_csv('~/Downloads/this.csv', skip=1) %>%
+  mutate(
+    dem_margin_2008=`Obama...10` - McCain,
+    dem_margin_2012=`Obama...8` - Romney,
+    dem_margin_2016=`Trump...7` - Clinton,
+    dem_margin_2020=Biden - `Trump...5`,
+  ) %>%
+  select(District, dem_margin_2008:dem_margin_2020)
+```
+
+```{r}
+as.data.frame(df %>% select(-District) %>% t(.)) %>%
+  mutate_all(~. - mean(., na.rm=T))
+```
+
+```{r}
+cormat = cor(as.data.frame(df %>% select(-District) %>% t(.)) %>%
+  mutate_all(~. - mean(.)), use='pairwise.complete.obs')
+```
+
+```{r}
+eigenvalues <- eigen(cormat)$values
 
 # Step 2: Calculate the effective number of independent observations
 trace_cov <- sum(eigenvalues)           # Sum of eigenvalues (trace of the covariance matrix)
