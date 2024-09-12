@@ -293,44 +293,11 @@ print(mean(rnd))
 ```
 
 
+## plot beta dist
+
 ```{r}
 par(mfrow = c(1, 2))
 hist(rbeta(1000, 0.7 * 5, 0.3 * 5), main='Beta dist; c = 5')
 hist(rbeta(1000, 0.7 * 0.7, 0.3 * 0.7), main='Beta dist; c = 0.7')
-```
-
-
-## House results
-
-
-```{r}
-df = read_csv('~/Downloads/this.csv', skip=1) %>%
-  mutate(
-    dem_margin_2008=`Obama...10` - McCain,
-    dem_margin_2012=`Obama...8` - Romney,
-    dem_margin_2016=`Trump...7` - Clinton,
-    dem_margin_2020=Biden - `Trump...5`,
-  ) %>%
-  select(District, dem_margin_2008:dem_margin_2020)
-```
-
-```{r}
-as.data.frame(df %>% select(-District) %>% t(.)) %>%
-  mutate_all(~. - mean(., na.rm=T))
-```
-
-```{r}
-cormat = cor(as.data.frame(df %>% select(-District) %>% t(.)) %>%
-  mutate_all(~. - mean(.)), use='pairwise.complete.obs')
-```
-
-```{r}
-eigenvalues <- eigen(cormat)$values
-
-# Step 2: Calculate the effective number of independent observations
-trace_cov <- sum(eigenvalues)           # Sum of eigenvalues (trace of the covariance matrix)
-sum_of_squares <- sum(eigenvalues^2)    # Sum of squared eigenvalues
-
-N_eff <- (trace_cov^2) / sum_of_squares
 ```
 
